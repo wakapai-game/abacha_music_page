@@ -1,0 +1,360 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Metronome - Professional Edition</title>
+    <meta name="description" content="プロフェッショナルなWebメトロノーム - BPM調整、タップテンポ、アクセント機能搭載">
+    
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- React and ReactDOM -->
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    
+    <!-- Babel Standalone for JSX -->
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    
+    <style>
+        @keyframes gradient-x {
+            0%, 100% { background-position: 0% 50%; }
+            50% { background-position: 100% 50%; }
+        }
+        .animate-gradient-x {
+            background-size: 200% 200%;
+            animation: gradient-x 3s ease infinite;
+        }
+        .slider::-webkit-slider-thumb {
+            appearance: none;
+            width: 20px;
+            height: 20px;
+            border-radius: 50%;
+            background: linear-gradient(135deg, #06b6d4, #a855f7);
+            cursor: pointer;
+            box-shadow: 0 0 12px rgba(168, 85, 247, 0.6), 0 0 20px rgba(6, 182, 212, 0.4);
+            border: 2px solid rgba(255, 255, 255, 0.3);
+            transition: all 0.2s;
+        }
+        .slider::-webkit-slider-thumb:hover {
+            transform: scale(1.2);
+            box-shadow: 0 0 20px rgba(168, 85, 247, 0.8), 0 0 30px rgba(6, 182, 212, 0.6);
+        }
+        .slider::-moz-range-thumb {
+            width: 20px;
+            height: 20px;
+            border-radius: 50%;
+            background: linear-gradient(135deg, #06b6d4, #a855f7);
+            cursor: pointer;
+            border: 2px solid rgba(255, 255, 255, 0.3);
+            box-shadow: 0 0 12px rgba(168, 85, 247, 0.6), 0 0 20px rgba(6, 182, 212, 0.4);
+            transition: all 0.2s;
+        }
+        .slider::-moz-range-thumb:hover {
+            transform: scale(1.2);
+            box-shadow: 0 0 20px rgba(168, 85, 247, 0.8), 0 0 30px rgba(6, 182, 212, 0.6);
+        }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useRef } = React;
+
+        function Metronome() {
+            const [bpm, setBpm] = useState(120);
+            const [isPlaying, setIsPlaying] = useState(false);
+            const [currentBeat, setCurrentBeat] = useState(0);
+            const [beatsPerMeasure, setBeatsPerMeasure] = useState(4);
+            const [volume, setVolume] = useState(0.5);
+            const [accentEnabled, setAccentEnabled] = useState(true);
+            const [tapTimes, setTapTimes] = useState([]);
+            
+            const audioContextRef = useRef(null);
+            const nextNoteTimeRef = useRef(0);
+            const timerIdRef = useRef(null);
+            const beatNumberRef = useRef(0);
+
+            useEffect(() => {
+                audioContextRef.current = new (window.AudioContext || window.webkitAudioContext)();
+                return () => {
+                    if (audioContextRef.current) {
+                        audioContextRef.current.close();
+                    }
+                };
+            }, []);
+
+            const scheduleNote = (time, beatNumber) => {
+                const osc = audioContextRef.current.createOscillator();
+                const envelope = audioContextRef.current.createGain();
+
+                osc.frequency.value = (accentEnabled && beatNumber % beatsPerMeasure === 0) ? 1000 : 800;
+                
+                envelope.gain.setValueAtTime(0, time);
+                envelope.gain.linearRampToValueAtTime(volume, time + 0.001);
+                envelope.gain.linearRampToValueAtTime(volume, time + 0.02);
+                envelope.gain.linearRampToValueAtTime(0, time + 0.03);
+
+                osc.connect(envelope);
+                envelope.connect(audioContextRef.current.destination);
+
+                osc.start(time);
+                osc.stop(time + 0.04);
+
+                const currentTime = audioContextRef.current.currentTime;
+                const delay = (time - currentTime) * 1000;
+                
+                setTimeout(() => {
+                    setCurrentBeat(beatNumber % beatsPerMeasure);
+                }, Math.max(0, delay));
+            };
+
+            const scheduler = () => {
+                const lookahead = 0.1;
+                const scheduleAheadTime = 0.1;
+
+                while (nextNoteTimeRef.current < audioContextRef.current.currentTime + scheduleAheadTime) {
+                    scheduleNote(nextNoteTimeRef.current, beatNumberRef.current);
+                    
+                    const secondsPerBeat = 60.0 / bpm;
+                    nextNoteTimeRef.current += secondsPerBeat;
+                    beatNumberRef.current++;
+                }
+
+                timerIdRef.current = setTimeout(scheduler, lookahead * 1000);
+            };
+
+            const startMetronome = () => {
+                if (!isPlaying) {
+                    beatNumberRef.current = 0;
+                    nextNoteTimeRef.current = audioContextRef.current.currentTime + 0.05;
+                    scheduler();
+                    setIsPlaying(true);
+                }
+            };
+
+            const stopMetronome = () => {
+                if (isPlaying) {
+                    clearTimeout(timerIdRef.current);
+                    setIsPlaying(false);
+                    setCurrentBeat(0);
+                }
+            };
+
+            const handleBpmChange = (value) => {
+                const newBpm = Math.max(40, Math.min(240, parseInt(value) || 120));
+                setBpm(newBpm);
+            };
+
+            const handleTapTempo = () => {
+                const now = Date.now();
+                const newTapTimes = [...tapTimes, now].slice(-4);
+                setTapTimes(newTapTimes);
+
+                if (newTapTimes.length >= 2) {
+                    const intervals = [];
+                    for (let i = 1; i < newTapTimes.length; i++) {
+                        intervals.push(newTapTimes[i] - newTapTimes[i - 1]);
+                    }
+                    const avgInterval = intervals.reduce((a, b) => a + b) / intervals.length;
+                    const calculatedBpm = Math.round(60000 / avgInterval);
+                    setBpm(Math.max(40, Math.min(240, calculatedBpm)));
+                }
+
+                setTimeout(() => {
+                    setTapTimes([]);
+                }, 3000);
+            };
+
+            return (
+                <div className="h-screen bg-gradient-to-br from-slate-950 via-purple-950 to-rose-950 flex flex-col items-center justify-center p-3 sm:p-4 relative overflow-hidden">
+                    {/* アニメーション背景 */}
+                    <div className="absolute inset-0 overflow-hidden pointer-events-none">
+                        <div className="absolute top-1/4 left-1/4 w-96 h-96 bg-purple-500/20 rounded-full blur-3xl animate-pulse"></div>
+                        <div className="absolute bottom-1/4 right-1/4 w-96 h-96 bg-rose-500/20 rounded-full blur-3xl animate-pulse" style={{ animationDelay: '1s' }}></div>
+                        <div className="absolute top-1/2 left-1/2 w-64 h-64 bg-cyan-500/10 rounded-full blur-3xl animate-pulse" style={{ animationDelay: '2s' }}></div>
+                    </div>
+
+                    {/* グリッド背景 */}
+                    <div className="absolute inset-0 opacity-[0.02]" style={{
+                        backgroundImage: 'linear-gradient(rgba(255,255,255,0.1) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,0.1) 1px, transparent 1px)',
+                        backgroundSize: '50px 50px'
+                    }}></div>
+
+                    <div className="relative z-10 w-full max-w-4xl flex flex-col items-center h-full justify-center space-y-4 sm:space-y-6">
+                        
+                        {/* ヘッダー */}
+                        <div className="text-center">
+                            <div className="inline-block relative">
+                                <h1 className="text-3xl sm:text-4xl md:text-5xl font-black bg-gradient-to-r from-purple-300 via-pink-300 to-cyan-300 bg-clip-text text-transparent animate-gradient-x tracking-tight">
+                                    METRONOME
+                                </h1>
+                                <div className="absolute -inset-2 bg-gradient-to-r from-purple-600 to-pink-600 rounded-lg blur opacity-20 animate-pulse"></div>
+                            </div>
+                            <div className="text-purple-300/40 text-xs sm:text-sm font-light tracking-[0.3em] mt-1">PROFESSIONAL EDITION</div>
+                        </div>
+
+                        {/* BPM表示 - 大きく中央に */}
+                        <div className="relative w-full">
+                            <div className="bg-gradient-to-br from-slate-900/80 to-slate-950/90 backdrop-blur-2xl rounded-3xl shadow-2xl p-6 sm:p-8 border border-purple-500/20 group">
+                                <div className="absolute -inset-0.5 bg-gradient-to-r from-purple-600 via-pink-600 to-cyan-600 rounded-3xl blur opacity-20 group-hover:opacity-30 transition-opacity"></div>
+                                
+                                <div className="relative text-center">
+                                    <div className="relative inline-block mb-4">
+                                        <div className="text-7xl sm:text-8xl md:text-9xl font-black bg-gradient-to-r from-cyan-300 via-purple-300 to-pink-300 bg-clip-text text-transparent font-mono tracking-tight">
+                                            {bpm}
+                                        </div>
+                                        <div className="absolute -inset-4 bg-gradient-to-r from-cyan-600/30 to-pink-600/30 blur-2xl -z-10 animate-pulse"></div>
+                                    </div>
+                                    <div className="text-purple-300/50 text-sm sm:text-base tracking-[0.3em] mb-6">BEATS PER MINUTE</div>
+
+                                    {/* ビートインジケーター - 大きく強調 */}
+                                    <div className="flex justify-center gap-3 sm:gap-4 mb-8">
+                                        {[...Array(beatsPerMeasure)].map((_, index) => (
+                                            <div key={index} className="relative flex flex-col items-center">
+                                                <div
+                                                    className={`w-12 h-12 sm:w-16 sm:h-16 md:w-20 md:h-20 rounded-2xl transition-all duration-150 flex items-center justify-center ${
+                                                        currentBeat === index && isPlaying
+                                                            ? (accentEnabled && index === 0)
+                                                                ? 'bg-gradient-to-br from-yellow-400 to-amber-500 shadow-2xl shadow-yellow-400/50 scale-110'
+                                                                : 'bg-gradient-to-br from-purple-500 to-pink-600 shadow-2xl shadow-purple-500/50 scale-110'
+                                                            : 'bg-slate-800/40 border-2 border-purple-500/20'
+                                                    }`}
+                                                >
+                                                    {currentBeat === index && isPlaying && (
+                                                        <>
+                                                            <div className="absolute inset-0 rounded-2xl bg-white/30 animate-ping"></div>
+                                                            <div className={`absolute inset-0 rounded-2xl blur-xl ${
+                                                                accentEnabled && index === 0 ? 'bg-yellow-400/50' : 'bg-purple-500/50'
+                                                            }`}></div>
+                                                        </>
+                                                    )}
+                                                    <span className={`text-2xl sm:text-3xl md:text-4xl font-black z-10 ${
+                                                        currentBeat === index && isPlaying ? 'text-white' : 'text-purple-400/30'
+                                                    }`}>
+                                                        {index + 1}
+                                                    </span>
+                                                </div>
+                                            </div>
+                                        ))}
+                                    </div>
+
+                                    {/* BPMスライダー */}
+                                    <div className="relative max-w-2xl mx-auto mb-4">
+                                        <input
+                                            type="range"
+                                            min="40"
+                                            max="240"
+                                            value={bpm}
+                                            onChange={(e) => handleBpmChange(e.target.value)}
+                                            className="w-full h-3 rounded-full appearance-none cursor-pointer slider"
+                                            style={{
+                                                background: `linear-gradient(to right, #06b6d4 0%, #a855f7 ${((bpm - 40) / 200) * 100}%, rgba(100,50,150,0.2) ${((bpm - 40) / 200) * 100}%)`
+                                            }}
+                                        />
+                                        <div className="flex justify-between text-purple-400/40 text-xs sm:text-sm font-semibold tracking-wider mt-2">
+                                            <span>LARGO</span>
+                                            <span>MODERATO</span>
+                                            <span>ALLEGRO</span>
+                                            <span>PRESTO</span>
+                                        </div>
+                                    </div>
+
+                                    {/* タップテンポボタン */}
+                                    <button
+                                        onClick={handleTapTempo}
+                                        className="w-full max-w-md mx-auto py-3 rounded-xl font-bold text-sm sm:text-base bg-gradient-to-r from-cyan-600/30 to-purple-600/30 hover:from-cyan-600/50 hover:to-purple-600/50 text-cyan-200 border-2 border-cyan-400/30 transition-all active:scale-95 shadow-lg"
+                                    >
+                                        TAP TEMPO {tapTimes.length > 0 && `(${tapTimes.length})`}
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+
+                        {/* コントロールパネル */}
+                        <div className="relative bg-gradient-to-b from-slate-900/90 to-slate-950/95 backdrop-blur-2xl rounded-2xl sm:rounded-3xl shadow-2xl p-4 sm:p-6 border border-purple-500/20 w-full">
+                            <div className="absolute -inset-0.5 bg-gradient-to-r from-purple-600 via-pink-600 to-cyan-600 rounded-2xl sm:rounded-3xl blur opacity-10"></div>
+                            
+                            <div className="relative grid grid-cols-2 md:grid-cols-4 gap-3 sm:gap-4">
+                                
+                                {/* 拍子選択 */}
+                                <div className="bg-gradient-to-br from-slate-800/60 to-slate-900/60 backdrop-blur-sm rounded-xl p-3 sm:p-4 border border-purple-400/20">
+                                    <label className="text-purple-300/60 text-xs sm:text-sm mb-2 block font-bold uppercase tracking-wider">Time</label>
+                                    <select
+                                        value={beatsPerMeasure}
+                                        onChange={(e) => setBeatsPerMeasure(parseInt(e.target.value))}
+                                        className="w-full bg-slate-900/50 text-purple-200 border border-purple-400/30 rounded-lg px-3 py-2 text-sm sm:text-base font-bold focus:outline-none focus:ring-2 focus:ring-purple-500/50 transition-all"
+                                    >
+                                        <option value="2">2/4</option>
+                                        <option value="3">3/4</option>
+                                        <option value="4">4/4</option>
+                                        <option value="6">6/8</option>
+                                    </select>
+                                </div>
+
+                                {/* アクセント */}
+                                <div className="bg-gradient-to-br from-slate-800/60 to-slate-900/60 backdrop-blur-sm rounded-xl p-3 sm:p-4 border border-purple-400/20">
+                                    <label className="text-purple-300/60 text-xs sm:text-sm mb-2 block font-bold uppercase tracking-wider">Accent</label>
+                                    <button
+                                        onClick={() => setAccentEnabled(!accentEnabled)}
+                                        className={`w-full py-2 rounded-lg font-bold text-sm sm:text-base transition-all transform active:scale-95 ${
+                                            accentEnabled
+                                                ? 'bg-gradient-to-r from-amber-500 to-yellow-600 text-white shadow-lg shadow-amber-500/30'
+                                                : 'bg-slate-800/50 text-purple-400/60 border border-purple-500/30'
+                                        }`}
+                                    >
+                                        {accentEnabled ? 'ON ●' : 'OFF ○'}
+                                    </button>
+                                </div>
+
+                                {/* 音量 */}
+                                <div className="bg-gradient-to-br from-slate-800/60 to-slate-900/60 backdrop-blur-sm rounded-xl p-3 sm:p-4 border border-purple-400/20">
+                                    <label className="text-purple-300/60 text-xs sm:text-sm mb-2 block font-bold uppercase tracking-wider">Volume</label>
+                                    <div className="flex items-center gap-2">
+                                        <div className="text-purple-400/60 text-lg">🔊</div>
+                                        <input
+                                            type="range"
+                                            min="0"
+                                            max="1"
+                                            step="0.01"
+                                            value={volume}
+                                            onChange={(e) => setVolume(parseFloat(e.target.value))}
+                                            className="flex-1 h-2 rounded-full appearance-none cursor-pointer slider"
+                                            style={{
+                                                background: `linear-gradient(to right, #06b6d4 0%, #a855f7 ${volume * 100}%, rgba(100,50,150,0.2) ${volume * 100}%)`
+                                            }}
+                                        />
+                                        <span className="text-purple-300 text-xs sm:text-sm font-bold w-10 text-right">{Math.round(volume * 100)}</span>
+                                    </div>
+                                </div>
+
+                                {/* 再生/停止ボタン */}
+                                <div className="bg-gradient-to-br from-slate-800/60 to-slate-900/60 backdrop-blur-sm rounded-xl p-3 sm:p-4 border border-purple-400/20">
+                                    <label className="text-purple-300/60 text-xs sm:text-sm mb-2 block font-bold uppercase tracking-wider">Control</label>
+                                    <button
+                                        onClick={isPlaying ? stopMetronome : startMetronome}
+                                        className={`w-full py-2 rounded-xl font-black text-base sm:text-lg transition-all transform active:scale-95 shadow-2xl relative overflow-hidden group ${
+                                            isPlaying
+                                                ? 'bg-gradient-to-r from-rose-600 to-pink-700 text-white'
+                                                : 'bg-gradient-to-r from-emerald-600 to-teal-700 text-white'
+                                        }`}
+                                    >
+                                        <div className="absolute inset-0 bg-gradient-to-r from-white/0 via-white/20 to-white/0 group-hover:translate-x-full transition-transform duration-1000"></div>
+                                        <div className="relative flex items-center justify-center gap-2">
+                                            <span className="text-xl">{isPlaying ? '■' : '▶'}</span>
+                                            <span>{isPlaying ? 'STOP' : 'START'}</span>
+                                        </div>
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            );
+        }
+
+        ReactDOM.render(<Metronome />, document.getElementById('root'));
+    </script>
+</body>
+</html>
